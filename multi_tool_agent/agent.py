@@ -1,121 +1,199 @@
-import datetime
-from zoneinfo import ZoneInfo
-from google.adk.agents import Agent, LlmAgent, SequentialAgent
 import os
 import requests
 from dotenv import load_dotenv
+from google.adk.agents import LlmAgent, SequentialAgent
 
 load_dotenv()
 
-# Load credentials
+# Load WordPress credentials
 WP_URL = os.getenv("WP_URL")
 WP_USERNAME = os.getenv("WP_USERNAME")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
-GEMINI_MODEL="gemini-2.0-flash"
 
-# def upload_post_with_image(title="title---narsi", description="description---test", image_path=""):
-#     # Auth
-#     auth = (WP_USERNAME, WP_APP_PASSWORD)
+GEMINI_MODEL = "gemini-2.0-flash"
 
-#     # # Step 1: Upload the image
-#     # media_url = f"{WP_URL}/wp-json/wp/v2/media"
-#     # headers = {
-#     #     "Content-Disposition": f"attachment; filename={os.path.basename(image_path)}"
-#     # }
-#     # with open(image_path, "rb") as img:
-#     #     media_response = requests.post(media_url, headers=headers, auth=auth, files={"file": img})
-    
-#     # if media_response.status_code != 201:
-#     #     raise Exception(f"Image upload failed: {media_response.text}")
+# ---- ADK Tool to Upload Blog Post ----
+def upload_wordpress_post(generated_title: str, meta_description: str, slug: str, image_prompt: str, blog_content: str) -> dict:
+    """
+    Uploads a blog post to WordPress with full SEO fields.
+    """
+    auth = (WP_USERNAME, WP_APP_PASSWORD)
+    post_url = f"{WP_URL}/wp-json/wp/v2/posts"
+    post_data = {
+        "title": generated_title,
+        "content": blog_content,
+        "excerpt": meta_description,
+        "slug": slug,
+        "status": "publish",
+        "meta": {
+            "image_prompt": image_prompt
+        }
+    }
+    response = requests.post(post_url, auth=auth, json=post_data)
 
-#     # media_id = media_response.json()["id"]
+    if response.status_code != 201:
+        raise Exception(f"Post upload failed: {response.text}")
 
-#     media_id = 595
+    post = response.json()
+    print(f"✅ Post published: {post['link']}")
+    return {"Success": True, "link": post["link"]}
 
-#     # Step 2: Create the blog post with image
-#     post_url = f"{WP_URL}/wp-json/wp/v2/posts"
-#     post_data = {
-#         "title": title,
-#         "content": description,
-#         "status": "draft",  # Or 'draft'
-#         "featured_media": media_id
-#     }
-#     post_response = requests.post(post_url, auth=auth, json=post_data)
-
-#     if post_response.status_code != 201:
-#         raise Exception(f"Post upload failed: {post_response.text}")
-
-#     post = post_response.json()
-#     print(f"✅ Post published: {post['link']}")
-#     return post["link"]
-
-
-# Blog Title Generator Agent
+# ---- Agent: Generate Blog Title ----
 blog_title_agent = LlmAgent(
     name="BlogTitleAgent",
     model=GEMINI_MODEL,
-    instruction="""You are an expert in SEO blog writing.
-    Your task is to generate a catchy, SEO-optimized title for a blog post.
+    instruction="""
+    You are a senior software engineer with 15+ years of experience who also writes for high-authority blogs.
 
-    If the user input is a topic, write a title based on it.
-    If the input is a URL, analyze the content and write an updated, engaging, and unique blog title.
+    Your task is to craft a **natural-sounding**, **SEO-optimized** blog title that:
+    - Feels authentic and engaging, like written by an experienced developer.
+    - Includes real-world search terms developers or learners would use.
+    - Avoids robotic or AI-like tone.
 
-    Respond only with the title, no explanation.
+    For Title word related please following this rule:
+    -Blog Title
+    -Ideal Length: 55–65 characters
+    -Style: Informative + Technical
+
+    Must Include:
+
+    -Primary keyword at the beginning
+    -A specific tech term or tool
+    -Optional: version numbers, frameworks, or tools (Node.js, ArgoCD, Golang, etc.)
+
+    Example Titles:
+
+    ✅ “Deploy Node.js App with ArgoCD on DigitalOcean: Step-by-Step” (62 chars)
+    ✅ “Top 10 Useful Linux Commands for Software Engineers in 2025” (61 chars)
+
+    If input is a topic, create a fitting blog title.
+
     """,
-    description="Generates a blog post title from a topic or website URL.",
+    description="Crafts natural, SEO-rich blog titles with technical authority.",
     output_key="generated_title"
 )
 
-# Blog Description Generator Agent
-blog_description_agent = LlmAgent(
-    name="BlogDescriptionAgent",
+meta_description_agent = LlmAgent(
+    name="MetaDescriptionAgent",
     model=GEMINI_MODEL,
-    instruction="""You are an AI assistant trained to write SEO-friendly blog descriptions.
+    instruction="""
+        Input:
+        - Blog Title: {generated_title}
 
-    **Input:**
+        Task:
+        Write a meta description (140–160 characters) that:
+        - Feels human-written
+        - Is keyword-rich and helpful
+        - Avoids AI-sounding phrases like “This blog post...”
+        - Summarizes the post clearly
+
+        Example:
+            Learn how to deploy a Node.js app using ArgoCD with DigitalOcean, covering YAML setup, Redis, CI/CD, and live production best practices. (157 chars)
+
+
+        Respond with only the meta description.
+        """,
+    description="Creates meta description for SEO.",
+    output_key="meta_description"
+)
+
+slug_agent = LlmAgent(
+    name="SlugAgent",
+    model=GEMINI_MODEL,
+    instruction="""
+        Input:
+        - Blog Title: {generated_title}
+
+        Task:
+        Create a clean, SEO-friendly URL slug:
+        - Use hyphens (-) between words
+        - All lowercase
+        - Avoid stop words
+        - Ideal: 30–50 characters
+
+        Respond with only the slug (e.g., `deploy-nodejs-app-argocd`).
+        """,
+    description="Generates SEO slug from the blog title.",
+    output_key="slug"
+)
+
+# ---- Agent: Generate Blog Description ----
+blog_content_agent = LlmAgent(
+    name="BlogContentAgent",
+    model=GEMINI_MODEL,
+    instruction="""
+    You are a 15-year experienced software engineer and technical blogger.
+
+    Input:
     - Title: {generated_title}
 
-    **Task:**
-    Write a compelling, AI-discoverable blog post description that:
-    1. Is between 40-60 words
-    2. Highlights the key value of the content
-    3. Includes relevant SEO keywords naturally
-    4. Is unique and engaging for search engines and users
+    Your task is to write a compelling, keyword-rich blog post content that:
+    1. Feels like it's written by a real human with deep tech experience.
+    2. Uses real-world keywords for AI tools and human search.
+    4. Avoids clichés like "This article will..." or "In this blog..."
+    5. Summarizes the key value of the article clearly and naturally.
 
-    Respond only with the description.
+    Content Body
+    -Ideal Word Count: 1,200–1,800 words 
+    Ideal Character Count: 8,000–11,000 characters
+    -Please not use unnecessary <br> tag for blog content ( p tag with <br> tag is not allowed).
+
+    Why:
+    -Google prefers in-depth content on technical topics.
+    -Tech readers (and AI tools) search for full stack, logs, configurations, code explanations, etc.
+    -Higher engagement with complete walkthroughs.
+
+    ✅ Break it into:
+    -Introduction (100–150 words / ~700 characters)
+    -3–5 Sections (with H3 and H4, each 250–400 words)
+    -Code Examples + Use Cases if needed
+    -Conclusion + Internal Links
+
+    Headings (H3)
+    -H3s: 30–50 characters, each targeting sub-keywords (e.g. “Setting Up Redis with Docker Compose”)
+    -H4s: Use for breakdowns (e.g. “Step 1: Create docker-compose.yml”)
+
+    Your output must sound confident, expert-written, and not like a machine.
+    Output: Blog body in valid HTML or Markdown format.
     """,
-    description="Generates a SEO and AI-optimized blog description.",
-    output_key="generated_description"
+    description="Generates expert-sounding, AI-discoverable blog body content.",
+    output_key="generated_content"
 )
 
-# # Image Prompt Generator Agent
-# image_prompt_agent = LlmAgent(
-#     name="ImagePromptAgent",
-#     model=GEMINI_MODEL,
-#     instruction="""You are an AI image prompt writer for DALL-E or Midjourney.
+# ---- Agent: Generate Image Prompt + Upload ----
+image_prompt_agent = LlmAgent(
+    name="ImagePromptAgent",
+    model=GEMINI_MODEL,
+    instruction="""
+    You are an AI illustrator prompt engineer for Midjourney or DALL·E.
 
-#     **Input:**
-#     - Blog Title: {generated_title}
-#     - Blog Description: {generated_description}
+    Inputs:
+    - Blog Title: {generated_title}
+    - Blog Content: {generated_content}
 
-#     **Task:**
-#     Write a vivid, descriptive image prompt that could be used to generate an illustration for this blog post.
-#     Make it imaginative, AI-friendly, and highly visual.
+    Task:
+    1. Write a descriptive, vivid, visually-inspiring image prompt for an illustration based on the blog content.
+    2. Ensure the prompt feels creative and matches the blog's subject.
+    3. Keep it clean, colorful, and realistic — no generic AI language.
 
-#     Respond only with the prompt, no explanation.
-#     """,
-#     description="Generates an AI-illustration image prompt based on the title and description.",
-#     output_key="image_prompt"
-# )
+    Then automatically call the tool `upload_wordpress_post` with:
+    - generated_title
+    - meta_description
+    - slug
+    - image_prompt
+    - generated_content
+    """,
+    description="Generates an illustration prompt and publishes blog post to WordPress.",
+    tools=[upload_wordpress_post],
+    output_key="image_prompt"
+)
 
-
-# --- 2. Create the SequentialAgent ---
-# This agent orchestrates the pipeline by running the sub_agents in order.
+# ---- Sequential Workflow ----
 seo_blog_pipeline_agent = SequentialAgent(
     name="SeoBlogPipelineAgent",
-    sub_agents=[blog_title_agent, blog_description_agent],
-    description="Generates blog title, description and image prompt based on topic or URL input.",
+    sub_agents=[blog_title_agent, meta_description_agent, slug_agent, blog_content_agent, image_prompt_agent],
+    description="Generates a blog title, content, meta description, slug, illustration prompt, and publishes it.",
 )
 
-# For ADK tools compatibility, the root agent must be named `root_agent`
+# ---- Required Root Agent ----
 root_agent = seo_blog_pipeline_agent
