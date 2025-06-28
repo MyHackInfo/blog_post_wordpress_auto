@@ -13,7 +13,7 @@ WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 GEMINI_MODEL = "gemini-2.0-flash"
 
 # ---- ADK Tool to Upload Blog Post ----
-def upload_wordpress_post(generated_title: str, meta_description: str, slug: str, image_prompt: str, blog_content: str) -> dict:
+def upload_wordpress_post(generated_title: str, meta_description: str, slug: str, image_prompt: str, blog_content: str, category_id: str, focus_keyphrase: str) -> dict:
     """
     Uploads a blog post to WordPress with full SEO fields.
     """
@@ -23,10 +23,15 @@ def upload_wordpress_post(generated_title: str, meta_description: str, slug: str
         "title": generated_title,
         "content": blog_content,
         "excerpt": meta_description,
+        "categories": [int(category_id)],
         "slug": slug,
         "status": "publish",
         "meta": {
-            "image_prompt": image_prompt
+            "image_prompt": image_prompt,
+            "_yoast_wpseo_metadesc": meta_description,
+            "_yoast_wpseo_title": generated_title,
+            "_yoast_wpseo_focuskw": focus_keyphrase,
+
         }
     }
     response = requests.post(post_url, auth=auth, json=post_data)
@@ -147,13 +152,14 @@ blog_content_agent = LlmAgent(
     -Introduction (100–150 words / ~700 characters)
     -3–5 Sections (with H3 and H4, each 250–400 words)
     -Code Examples + Use Cases if needed
-    -Conclusion + Internal Links
+    -Conclusion + Internal Links + Top 3,5 FAQs based on requirements of blog content.
 
     Headings (H3)
     -H3s: 30–50 characters, each targeting sub-keywords (e.g. “Setting Up Redis with Docker Compose”)
     -H4s: Use for breakdowns (e.g. “Step 1: Create docker-compose.yml”)
 
     Your output must sound confident, expert-written, and not like a machine.
+    Note: In wordpress we use SyntaxHighlighter plugin for programming code show on it. (The language syntax to highlight with. You can alternately just use that as the tag, such as [php]code[/php]. Available tags: as3, actionscript3, arduino, bash, shell, coldfusion, cf, clojure, clj, cpp, c, c-sharp, csharp, css, delphi, pas, pascal, diff, patch, erl, erlang, fsharp, go, golang, groovy, haskell, java, jfx, javafx, js, jscript, javascript, latex, tex, matlab, matlabkey, objc, obj-c, perl, pl, php, plain, text, ps, powershell, py, python, r, splus, rails, rb, ror, ruby, scala, sql, swift, vb, vbnet, xml, xhtml, xslt, html, yaml, yml.)
     Output: Blog body in valid HTML or Markdown format.
     """,
     description="Generates expert-sounding, AI-discoverable blog body content.",
@@ -175,6 +181,16 @@ image_prompt_agent = LlmAgent(
     1. Write a descriptive, vivid, visually-inspiring image prompt for an illustration based on the blog content.
     2. Ensure the prompt feels creative and matches the blog's subject.
     3. Keep it clean, colorful, and realistic — no generic AI language.
+    4. Based on the blog title, content, assign it to the correct WordPress category using the following IDs:
+    - AI: 41
+    - Gadgets: 24
+    - MERN: 15
+    - Shopify: 6
+    - Wordpress: 5
+    5. Based on the blog title, content, assign it to the correct WordPress focus keyphrase on 'focus_keyphrase'.
+
+    Think carefully about the topic and return the right category ID.
+
 
     Then automatically call the tool `upload_wordpress_post` with:
     - generated_title
@@ -182,8 +198,10 @@ image_prompt_agent = LlmAgent(
     - slug
     - image_prompt
     - generated_content
+    - category_id
+    - focus_keyphrase
     """,
-    description="Generates an illustration prompt and publishes blog post to WordPress.",
+    description="Generates an illustration image prompt, classifies content, and publishes blog to WordPress.",
     tools=[upload_wordpress_post],
     output_key="image_prompt"
 )
